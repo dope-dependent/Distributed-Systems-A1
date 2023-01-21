@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify
 import json
 from collections import deque
+import psycopg2
 
 app = Flask(__name__)
-
+global conn
 
 
 # class Topics:
@@ -248,6 +249,7 @@ def dequeueMessage():
 
 @app.route('/size',methods = ['GET'])
 def size():
+    print(conn)
     data = request.json
     if "topic" in data and "consumer_id" in data:
         if data["topic"] not in all_topics:
@@ -300,4 +302,18 @@ def home():
     return "Hello, World!"
     
 if __name__ == "__main__":
+    conn = psycopg2.connect(
+            host="localhost",
+            database="postgres",
+            user="postgres",
+            password="admin"
+        )
+    cursor = conn.cursor()
+    
+    cursor.execute("""SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public'""")
+    
+    for table in cursor.fetchall():
+        print(table)
+    cursor.close()
     app.run(debug=True)
