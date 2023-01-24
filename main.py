@@ -39,8 +39,8 @@ def createTopic():
             cursor.execute("""SELECT COUNT (*) FROM all_topics""")
             id = cursor.fetchone()[0]+1
             print(id)
-            cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, headID, tailID) VALUES (%s, %s, %s, %s, %s, %s)",
-                            (id, data["name"], 0, 0, 0, 0))
+            cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
+                            (id, data["name"], 0, 0, 1))
 
             cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
                 messageid BIGINT PRIMARY KEY, 
@@ -90,6 +90,7 @@ def registerConsumer():
             },200)
             nid = consumer_id + 1
             cursor.execute("""UPDATE all_topics SET consumerID = %s WHERE topicName = %s""", (nid, data['topic']))
+            cursor.execute("""INSERT INTO all_consumers (consumerid, queueoffset) VALUES (%s, %s)""",(return_id,1))
         
         else:
             response = createResponse({
@@ -183,7 +184,7 @@ def enqueueMessage():
             return response
         
         # Head id
-        tid = result[0][5]
+        tid = result[0][4]
         col_names = sql.SQL(',').join(sql.Identifier(n) for n in ['messageid', 'message'])
         col_values = sql.SQL(',').join(sql.Literal(n) for n in [tid, data['message']])
         cursor.execute(sql.SQL("INSERT INTO {table_name} ({col_names}) VALUES ({col_values})").format(table_name = sql.Identifier(data['topic']), 
@@ -229,17 +230,18 @@ def dequeueMessage():
         if pid >= data['consumer_id']:
             response = createResponse({
                     "status": "failure", 
-                    "message": f'Bad request: topic not subscribed by producer'
+                    "message": f'Bad request: topic not subscribed by consumer'
                 },500)
             cursor.close()
             return response
         
-        hid = result[0][4]
-        tid = result[0][5]
+        cursor.execute("""SELECT * FROM all_consumers WHERE consumerID = %s""",(data["consumer_id"],))
+        hid = cursor.fetchone()[1]
+        tid = result[0][4]
         if hid == tid:
             response = createResponse({
                     "status": "failure", 
-                    "message": f'Server Error: Nothing is in the queue'
+                    "message": f'Server Error: Consumer is up to date with all entries'
                 },400)
         else:
             cursor.execute(sql.SQL("""SELECT message 
@@ -248,11 +250,8 @@ def dequeueMessage():
                                         hid = sql.Literal(hid)))
 
             message = cursor.fetchall()[0][0]
-            cursor.execute(sql.SQL("""DELETE FROM {table_name} 
-                                    WHERE messageid = {hid}""").format(table_name = sql.Identifier(data['topic']), 
-                                    hid = sql.Literal(hid)))
 
-            cursor.execute("UPDATE all_topics SET headID = %s WHERE topicName = %s", (hid + 1, data['topic']))
+            cursor.execute("UPDATE all_consumers SET queueoffset = %s WHERE consumerID = %s", (hid + 1, data['consumer_id']))
             
             response = createResponse({
                     "status": "success", 
@@ -298,11 +297,14 @@ def size():
             return response
         
         
-        cursor.execute(sql.SQL("SELECT COUNT(*) FROM {table_name}").format(table_name = sql.Identifier(data['topic'])))
-        lenQueue = cursor.fetchall()[0]
+        cursor.execute("SELECT tailID FROM all_topics WHERE topicName = %s",(data['topic'],))
+        tid = cursor.fetchone()[0]
+        cursor.execute(sql.SQL("SELECT queueoffset FROM all_consumers WHERE consumerID={consumerID}").
+                    format(consumerID=sql.Literal(data['consumer_id'])))
+        queueoffset = cursor.fetchone()[0]
         response = createResponse({
                 "status": "success",
-                "size": lenQueue
+                "size": tid - queueoffset
             },200)
             
     else:

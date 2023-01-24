@@ -1,5 +1,5 @@
 # #create topic
-curl -X POST -d '{"name": "producer_signup"}' -H 'Content-Type: application/json' http://127.0.0.1:5000/topics
+# curl -X POST -d '{"name": "producer_signup"}' -H 'Content-Type: application/json' http://127.0.0.1:5000/topics
 
 #create producer and consumer
 # curl -X POST -d '{"topic": "producer_signup"}' -H 'Content-Type: application/json' http://127.0.0.1:5000/producer/register
@@ -17,7 +17,7 @@ curl -X POST -d '{"name": "producer_signup"}' -H 'Content-Type: application/json
 # curl -X GET  -d '{"topic": "producer_signup","consumer_id":10000000000000}' -H 'Content-Type: application/json' http://127.0.0.1:5000/consumer/consume
 
 # #queue size should change to 1
-# curl -X GET  -d '{"topic": "producer_signup","consumer_id":10000000000000}' -H 'Content-Type: application/json' http://127.0.0.1:5000/size
+curl -X GET  -d '{"topic": "producer_signup","consumer_id":10000000000000}' -H 'Content-Type: application/json' http://127.0.0.1:5000/size
 
 # Retrieve Second Message
 # curl -X GET  -d '{"topic": "producer_signup","consumer_id":10000000000000}' -H 'Content-Type: application/json' http://127.0.0.1:5000/consumer/consume
