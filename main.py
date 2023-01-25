@@ -1,3 +1,4 @@
+import collections
 from flask import Flask, request
 import json
 import psycopg2
@@ -86,23 +87,29 @@ def createTopic():
             response = ServerErrorResponse('topic already present')
         
         else:
-            response = GoodResponse({
-                        "status": "success", 
-                        "message": f'Topic {data["name"]} created successfully'
-                    })
-            
-            cursor.execute("""SELECT COUNT (*) FROM all_topics""")
-            id = cursor.fetchone()[0]+1
 
-            cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
-                            (id, data["name"], 0, 0, 1))
+            try:
+                response = GoodResponse({
+                            "status": "success", 
+                            "message": f'Topic {data["name"]} created successfully'
+                        })
+                
+                cursor.execute("""SELECT COUNT (*) FROM all_topics""")
+                id = cursor.fetchone()[0]+1
 
-            cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
-                messageid BIGINT PRIMARY KEY, 
-                message TEXT
-            )""").format(table_name = sql.Identifier(data['name'])))
-        
-        cursor.close()
+                cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
+                                (id, data["name"], 0, 0, 1))
+
+                cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
+                    messageid BIGINT PRIMARY KEY, 
+                    message TEXT
+                )""").format(table_name = sql.Identifier(data['name'])))
+
+                conn.commit()
+                cursor.close()
+            except:
+                response = ServerErrorResponse("failed to add topic to database")
+
     else:
         response = BadRequestResponse('topic not sent')
         
@@ -124,25 +131,31 @@ def registerConsumer():
     data = request.json
 
     if "topic" in data:
-        cursor = conn.cursor()
-        cursor.execute("""SELECT * FROM all_topics WHERE topicName = %s""", (data['topic'],))
-        ids = cursor.fetchall()
-        cursor.close()
-
-        if len(ids) != 0:
-            consumerID = ids[0][2]
-            topicID = ids[0][0]
-            returnID = (topicID * (10 ** 12) + consumerID) * 10
-
-            response = GoodResponse({"status": "success", "consumer_id": returnID})
-
             cursor = conn.cursor()
-            cursor.execute("""UPDATE all_topics SET consumerID = %s WHERE topicName = %s""", (consumerID + 1, data['topic']))
-            cursor.execute("""INSERT INTO all_consumers (consumerid, queueoffset) VALUES (%s, %s)""", (returnID, 1))
+            cursor.execute("""SELECT * FROM all_topics WHERE topicName = %s""", (data['topic'],))
+            ids = cursor.fetchall()
             cursor.close()
-        
-        else: 
-            response = ServerErrorResponse('topic not present in the database')
+
+            if len(ids) != 0:
+                try:
+                    consumerID = ids[0][2]
+                    topicID = ids[0][0]
+                    returnID = (topicID * (10 ** 12) + consumerID) * 10
+
+                    response = GoodResponse({"status": "success", "consumer_id": returnID})
+
+                    cursor = conn.cursor()
+                    cursor.execute("""UPDATE all_topics SET consumerID = %s WHERE topicName = %s""", (consumerID + 1, data['topic']))
+                    cursor.execute("""INSERT INTO all_consumers (consumerid, queueoffset) VALUES (%s, %s)""", (returnID, 1))
+                    cursor.close()
+
+                    conn.commit()
+
+                except:
+                    response = ServerErrorResponse('error in registering the consumer')
+
+            else: 
+                response = ServerErrorResponse('topic not present in the database')
             
     else:
         response = BadRequestResponse('topic not sent')
@@ -161,29 +174,35 @@ def registerProducer():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM all_topics WHERE topicName = %s", (data["topic"],))
         result = cursor.fetchall()
-        if len(result) == 0:    # Create topic if this topic is not present
-            cursor.execute("""SELECT COUNT (*) FROM all_topics""")
-            topicID = cursor.fetchone()[0] + 1
-            producerID = 0
+        try:
+            if len(result) == 0:    # Create topic if this topic is not present
+                cursor.execute("""SELECT COUNT (*) FROM all_topics""")
+                topicID = cursor.fetchone()[0] + 1
+                producerID = 0
+                
+                cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
+                                (id, data["topic"], 0, 0, 1))
+
+                cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
+                    messageid BIGINT PRIMARY KEY, 
+                    message TEXT
+                )""").format(table_name = sql.Identifier(data['topic'])))
             
-            cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
-                            (id, data["topic"], 0, 0, 1))
+            else:
+                topicID = result[0][0]
+                producerID = result[0][3]
 
-            cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
-                messageid BIGINT PRIMARY KEY, 
-                message TEXT
-            )""").format(table_name = sql.Identifier(data['topic'])))
+
+            cursor.execute("""UPDATE all_topics SET producerID = %s WHERE topicName = %s""", (producerID + 1, data['topic']))
+            cursor.close()
+
+            returnID = (topicID * (10 ** 12) + producerID) * 10 + 1
+            response = GoodResponse({"status": "success", "producer_id": returnID})  
+
+            conn.commit()
         
-        else:
-            topicID = result[0][0]
-            producerID = result[0][3]
-
-
-        cursor.execute("""UPDATE all_topics SET producerID = %s WHERE topicName = %s""", (producerID + 1, data['topic']))
-        cursor.close()
-
-        returnID = (topicID * (10 ** 12) + producerID) * 10 + 1
-        response = GoodResponse({"status": "success", "producer_id": returnID})  
+        except:
+            response = ServerErrorResponse('error in registering producer')
     
     else:
         response = BadRequestResponse('topic not sent')
@@ -206,17 +225,24 @@ def enqueueMessage():
         col_names = sql.SQL(',').join(sql.Identifier(n) for n in ['messageid', 'message'])
         col_values = sql.SQL(',').join(sql.Literal(n) for n in [tid, data['message']])
 
-        cursor = conn.cursor()
-        cursor.execute(sql.SQL("INSERT INTO {table_name} ({col_names}) VALUES ({col_values})").format(table_name = sql.Identifier(data['topic']), 
-                                    col_names = col_names, 
-                                    col_values = col_values))
+        cursor = conn.cursor() 
+        try:
+            
+            cursor.execute(sql.SQL("INSERT INTO {table_name} ({col_names}) VALUES ({col_values})").format(table_name = sql.Identifier(data['topic']), 
+                                        col_names = col_names, 
+                                        col_values = col_values))
 
-        cursor.execute("UPDATE all_topics SET tailID = %s WHERE topicName = %s", (tid + 1, data['topic']))
-        cursor.close()    
+            cursor.execute("UPDATE all_topics SET tailID = %s WHERE topicName = %s", (tid + 1, data['topic']))
+
+            response = GoodResponse({"status": "success"})
+            conn.commit()
+        except:
+            response = ServerErrorResponse('error in adding message to the queue')
         
-        response = GoodResponse({"status": "success"})
+        cursor.close()  
+        
+        
     else:
-
         response = BadRequestResponse('topic or producer id not sent')
     
     print(response)
@@ -231,7 +257,7 @@ def dequeueMessage():
         cursor = conn.cursor()
         resp, result = checkValidityOfID(id = data['consumer_id'], topic = data['topic'], client = "consumer")
         
-        if result is not None: return resp
+        if result is None: return resp
         
         cursor.execute("""SELECT * FROM all_consumers WHERE consumerID = %s""",(data["consumer_id"],))
 
@@ -242,16 +268,20 @@ def dequeueMessage():
             response = ServerErrorResponse('consumer is up to date')
         
         else:
-            cursor.execute(sql.SQL("""SELECT message 
-                                        FROM {table_name} 
-                                        WHERE messageid = {hid}""").format(table_name = sql.Identifier(data['topic']), 
-                                        hid = sql.Literal(hid)))
+            try:
+                cursor.execute(sql.SQL("""SELECT message 
+                                            FROM {table_name} 
+                                            WHERE messageid = {hid}""").format(table_name = sql.Identifier(data['topic']), 
+                                            hid = sql.Literal(hid)))
 
-            message = cursor.fetchall()[0][0]
+                message = cursor.fetchall()[0][0]
 
-            cursor.execute("UPDATE all_consumers SET queueoffset = %s WHERE consumerID = %s", (hid + 1, data['consumer_id']))
-            
-            response = GoodResponse({"status": "success", "message": message})
+                cursor.execute("UPDATE all_consumers SET queueoffset = %s WHERE consumerID = %s", (hid + 1, data['consumer_id']))
+                
+                response = GoodResponse({"status": "success", "message": message})
+                conn.commit()
+            except:
+                response = ServerErrorResponse('error in fetching message from the queue')
         
         cursor.close()
     else:
@@ -304,20 +334,63 @@ def home():
     return "Hello, World!"
     
 if __name__ == "__main__":
+
+    DB_NAME = 'dist_queue'
+
     conn = psycopg2.connect(
             host="localhost",
-            database="postgres",
             user="postgres",
-            password="admin"
+            password="admin",
+        )
+    conn.autocommit = True
+   
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s",(DB_NAME,))
+    exists = cursor.fetchone()
+    if not exists:
+        cursor.execute(sql.SQL("CREATE DATABASE {db_name}")
+                .format(db_name = sql.Identifier(DB_NAME)))
+        cursor.close()
+        conn.close()
+
+        conn = psycopg2.connect(
+            host="localhost",
+            user="postgres",
+            password="admin",
+            dbname = DB_NAME
         )
 
-    conn.autocommit = True
+        cursor = conn.cursor()
+        cursor.execute("""CREATE TABLE all_topics (
+                topicID INT,
+                topicName VARCHAR(255) PRIMARY KEY,
+                consumerID BIGINT,
+                producerID BIGINT,
+                tailID BIGINT
+                )""")
+
+        cursor.execute("""CREATE TABLE all_consumers(
+            consumerID BIGINT PRIMARY KEY,
+            queueoffset BIGINT)""")
+        conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+    conn = psycopg2.connect(
+            host="localhost",
+            user="postgres",
+            password="admin",
+            dbname = DB_NAME
+        )
+
     cursor = conn.cursor()
-    
     cursor.execute("""SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public'""")
-    
-    for table in cursor.fetchall():
-        print(table)
-    cursor.close()
+
+    all_tables = cursor.fetchall()
+    print(all_tables)
+
+
     app.run(debug=True)
