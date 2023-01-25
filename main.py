@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import json
 import psycopg2
 from psycopg2 import sql
@@ -6,39 +6,94 @@ from psycopg2 import sql
 app = Flask(__name__)
 global conn
 
-def createResponse(r, status):
-    response = app.response_class(
-                response=json.dumps(r),
-                status=status,
-                mimetype='application/json'
+# TODO Replace raw indexing by CID indexing as given below
+# TODO Close exit on termination of main.py file
+# TODO (Optional) Move the three Request Classes to a separate file (requires remving the app dependency)
+# TODO Provide option to create tables all_topics, all_consumers from scratch
+
+def BadRequestResponse(message: str = ""):
+    resp = app.response_class(
+                response=json.dumps({
+                    "status": "failure", 
+                    "message": 'Bad Request: ' + message
+                }),
+                status = 400,
+                mimetype = 'application/json'
+            )
+    return resp
+
+def ServerErrorResponse(message: str = ""):
+    resp = app.response_class(
+                response=json.dumps({
+                    "status": "failure", 
+                    "message": 'Server Error: ' + message
+                }),
+                status = 500,
+                mimetype = 'application/json'
+            )
+    return resp
+
+def GoodResponse(response: dict = {}):
+    resp = app.response_class(
+                response=json.dumps(response), 
+                status = 200,
+                mimetype = 'application/json'
             )
     
-    return response
+    return resp
 
-# a
+CID = {
+    'topicid'   : 0,
+    'topicname' : 1,
+    'consumerid': 2, 
+    'producerid': 3,
+    'tailid'    : 4 
+}
+
+def checkValidityOfID(id: int, topic: str, client: str):
+    ind = 3 if client == "producer" else 2
+    cursor = conn.cursor()
+    try: 
+        cursor.execute("""SELECT * FROM all_topics WHERE topicName = %s""",(topic,))
+    except:
+        return ServerErrorResponse(), None
+    
+    result = cursor.fetchall()
+    cursor.close()
+
+    if len(result) == 0:
+        return BadRequestResponse('topic not present in database'), None
+
+    table_id = (id // 10) % (10 ** 12)
+    table_topic = id // (10 ** 13)
+    flag = id % 2
+    correct_flag = 1 if client == "producer" else 0
+    if table_topic != result[0][0] or table_id >= result[0][ind]: 
+        return BadRequestResponse(f'topic not subscribed by {client}'), None
+    else:
+        return None, result
+
+
+# A
 @app.route("/topics", methods = ["POST"])
 def createTopic():
     data = request.json
-    cursor = conn.cursor()
 
     if "name" in data:
-
+        cursor = conn.cursor()
         cursor.execute("SELECT * FROM all_topics WHERE topicName = %s",(data["name"],))
-
         if len(cursor.fetchall()) != 0:
-            response = createResponse({
-                        "status": "failure", 
-                        "message": f'Bad request: name already present'
-                    }, 500)
-            
+            response = ServerErrorResponse('topic already present')
+        
         else:
-            response = createResponse({
+            response = GoodResponse({
                         "status": "success", 
                         "message": f'Topic {data["name"]} created successfully'
-                    }, 200)
+                    })
+            
             cursor.execute("""SELECT COUNT (*) FROM all_topics""")
             id = cursor.fetchone()[0]+1
-            print(id)
+
             cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
                             (id, data["name"], 0, 0, 1))
 
@@ -46,63 +101,51 @@ def createTopic():
                 messageid BIGINT PRIMARY KEY, 
                 message TEXT
             )""").format(table_name = sql.Identifier(data['name'])))
-            
-    else:
-        response = createResponse({
-                        "status": "failure", 
-                        "message": f'Bad request: name not sent'
-                    },500)
         
-    cursor.close()
+        cursor.close()
+    else:
+        response = BadRequestResponse('topic not sent')
+        
     print(response)
-    print()
     return response   
 
-# b
+# B
 @app.route("/topics", methods = ['GET'])
 def ListTopics():
     cursor = conn.cursor()
     cursor.execute("SELECT topicName FROM all_topics")
     all_topics = cursor.fetchall()
-    response = createResponse({
-                "topics": all_topics[0]
-            }, 200)
+    cursor.close()
+    return GoodResponse({"topics": all_topics[0]})
 
-    return response
-
-# c
-
+# C
 @app.route("/consumer/register", methods = ["POST"])
 def registerConsumer():
     data = request.json
-    cursor = conn.cursor()
 
     if "topic" in data:
+        cursor = conn.cursor()
         cursor.execute("""SELECT * FROM all_topics WHERE topicName = %s""", (data['topic'],))
         ids = cursor.fetchall()
+        cursor.close()
+
         if len(ids) != 0:
-            consumer_id = ids[0][2]
-            topic_id = ids[0][0]
-            return_id = (topic_id * (10 ** 12) + consumer_id) * 10
-            response = createResponse({
-                "status": "success", 
-                "consumer_id": return_id
-            },200)
-            nid = consumer_id + 1
-            cursor.execute("""UPDATE all_topics SET consumerID = %s WHERE topicName = %s""", (nid, data['topic']))
-            cursor.execute("""INSERT INTO all_consumers (consumerid, queueoffset) VALUES (%s, %s)""",(return_id,1))
+            consumerID = ids[0][2]
+            topicID = ids[0][0]
+            returnID = (topicID * (10 ** 12) + consumerID) * 10
+
+            response = GoodResponse({"status": "success", "consumer_id": returnID})
+
+            cursor = conn.cursor()
+            cursor.execute("""UPDATE all_topics SET consumerID = %s WHERE topicName = %s""", (consumerID + 1, data['topic']))
+            cursor.execute("""INSERT INTO all_consumers (consumerid, queueoffset) VALUES (%s, %s)""", (returnID, 1))
+            cursor.close()
         
-        else:
-            response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not sent or topic not present'
-            },500)
+        else: 
+            response = ServerErrorResponse('topic not present in the database')
             
     else:
-        response = createResponse({
-            "status": "failure", 
-            "message": f'Bad request: topic not sent or topic not present'
-        },500)
+        response = BadRequestResponse('topic not sent')
     
     cursor.close()
     print(response)
@@ -110,139 +153,94 @@ def registerConsumer():
     return response
 
 
-# d
+# D
 @app.route("/producer/register", methods = ["POST"])
 def registerProducer():
     data = request.json
-    cursor = conn.cursor()
     if "topic" in data:
-        cursor.execute("SELECT * FROM all_topics WHERE topicName = %s",(data["topic"],))
-
-        if len(cursor.fetchall()) == 0:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM all_topics WHERE topicName = %s", (data["topic"],))
+        result = cursor.fetchall()
+        if len(result) == 0:    # Create topic if this topic is not present
             cursor.execute("""SELECT COUNT (*) FROM all_topics""")
+            topicID = cursor.fetchone()[0] + 1
+            producerID = 0
             
-            id = cursor.fetchone()[0]+1
-            
-            cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, headID, tailID) VALUES (%s, %s, %s, %s, %s, %s)",
-                            (id, data["topic"], 0, 0, 0, 0))
+            cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
+                            (id, data["topic"], 0, 0, 1))
 
             cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
                 messageid BIGINT PRIMARY KEY, 
                 message TEXT
             )""").format(table_name = sql.Identifier(data['topic'])))
-
-        cursor.execute("""SELECT * FROM all_topics WHERE topicName = %s""", (data['topic'],))
-        result = cursor.fetchall()[0]
-        topic_id = result[0]
-        producer_id = result[3]
-        nid = producer_id + 1
         
-        cursor.execute("""UPDATE all_topics SET producerID = %s WHERE topicName = %s""", (nid, data['topic']))
-        return_id = (topic_id * (10 ** 12) + producer_id) * 10 + 1
-        response = createResponse({
-            "status": "success", 
-            "producer_id": return_id
-        },200)
-            
-    else:
-        response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not sent'
-            },500)
+        else:
+            topicID = result[0][0]
+            producerID = result[0][3]
 
-    cursor.close()
-    print(response)
-    print()
+
+        cursor.execute("""UPDATE all_topics SET producerID = %s WHERE topicName = %s""", (producerID + 1, data['topic']))
+        cursor.close()
+
+        returnID = (topicID * (10 ** 12) + producerID) * 10 + 1
+        response = GoodResponse({"status": "success", "producer_id": returnID})  
+    
+    else:
+        response = BadRequestResponse('topic not sent')
+
     return response
 
 
-# e
+# E
 @app.route("/producer/produce", methods = ["POST"])
 def enqueueMessage():
     data = request.json
-    cursor = conn.cursor()
     if "topic" in data and "producer_id" in data and "message" in data:
         # Check for data['topic']
-        cursor.execute("SELECT * FROM all_topics WHERE topicName = %s", (data['topic'],))
-        result = cursor.fetchall()
-        if len(result) == 0:
-            response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not present'
-            },500)
-            cursor.close()
-            return response
-        
-        # Check for producer_id 
-        pid = result[0][3]
-        if pid >= data['producer_id']:
-            response = createResponse({
-                    "status": "failure", 
-                    "message": f'Bad request: topic not subscribed by producer'
-                },500)
-            cursor.close()
-            return response
-        
+        resp, result = checkValidityOfID(data['producer_id'], data['topic'], "producer")
+        if result is None: return resp
+
         # Head id
         tid = result[0][4]
+
         col_names = sql.SQL(',').join(sql.Identifier(n) for n in ['messageid', 'message'])
         col_values = sql.SQL(',').join(sql.Literal(n) for n in [tid, data['message']])
+
+        cursor = conn.cursor()
         cursor.execute(sql.SQL("INSERT INTO {table_name} ({col_names}) VALUES ({col_values})").format(table_name = sql.Identifier(data['topic']), 
                                     col_names = col_names, 
                                     col_values = col_values))
 
         cursor.execute("UPDATE all_topics SET tailID = %s WHERE topicName = %s", (tid + 1, data['topic']))
+        cursor.close()    
         
-        response = createResponse({
-                "status": "success"
-            },200)
-            
+        response = GoodResponse({"status": "success"})
     else:
-        response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not sent'
-            },500)
+
+        response = BadRequestResponse('topic or producer id not sent')
     
-    cursor.close()
     print(response)
-    print()
     return response
 
 
-# f
-
-@app.route('/consumer/consume',methods=["GET"])
+# F
+@app.route('/consumer/consume', methods = ["GET"])
 def dequeueMessage():
     data = request.json
-    cursor = conn.cursor()
     if "topic" in data and "consumer_id" in data:
-        cursor.execute("SELECT * FROM all_topics WHERE topicName = %s", (data['topic'],))
-        result = cursor.fetchall()
-        if len(result) == 0:
-            response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not present'
-            },500)
-            cursor.close()
-            return response
+        cursor = conn.cursor()
+        resp, result = checkValidityOfID(id = data['consumer_id'], topic = data['topic'], client = "consumer")
         
-        pid = result[0][2]
-        if pid >= data['consumer_id']:
-            response = createResponse({
-                    "status": "failure", 
-                    "message": f'Bad request: topic not subscribed by consumer'
-                },500)
-            cursor.close()
-            return response
+        if result is not None: return resp
         
         cursor.execute("""SELECT * FROM all_consumers WHERE consumerID = %s""",(data["consumer_id"],))
+
         hid = cursor.fetchone()[1]
         tid = result[0][4]
+
         if hid == tid:
-            response = createResponse({
-                    "status": "failure", 
-                    "message": f'Server Error: Consumer is up to date with all entries'
-                },400)
+            response = ServerErrorResponse('consumer is up to date')
+        
         else:
             cursor.execute(sql.SQL("""SELECT message 
                                         FROM {table_name} 
@@ -253,69 +251,52 @@ def dequeueMessage():
 
             cursor.execute("UPDATE all_consumers SET queueoffset = %s WHERE consumerID = %s", (hid + 1, data['consumer_id']))
             
-            response = createResponse({
-                    "status": "success", 
-                    "message": message
-                },200)
-            
+            response = GoodResponse({"status": "success", "message": message})
+        
+        cursor.close()
     else:
-        response = createResponse({
-                    "status": "failure", 
-                    "message": f'Bad request: topic not sent'
-                },500)
+        response = BadRequestResponse('topic or consumer id not sent')
 
-    cursor.close()
     print(response)
     return response
 
-# g
-
-@app.route('/size',methods = ['GET'])
+# G
+@app.route('/size', methods = ['GET'])
 def size():
     print(conn)
     data = request.json
     cursor = conn.cursor()
     if "topic" in data and "consumer_id" in data:
-        cursor.execute("SELECT * FROM all_topics WHERE topicName = %s", (data['topic'],))
-        result = cursor.fetchall()
-        if len(result) == 0:
-            response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not present'
-            },500)
-            cursor.close()
-            return response
-
-        
-        pid = result[0][2]
-        if pid >= data['consumer_id']:
-            response = createResponse({
-                    "status": "failure", 
-                    "message": f'Bad request: topic not subscribed by producer'
-                },500)
-            cursor.close()
-            return response
-        
+        resp, result = checkValidityOfID(data['consumer_id'], data['topic'], "consumer")
+        if result is None: return resp
         
         cursor.execute("SELECT tailID FROM all_topics WHERE topicName = %s",(data['topic'],))
+
         tid = cursor.fetchone()[0]
+
         cursor.execute(sql.SQL("SELECT queueoffset FROM all_consumers WHERE consumerID={consumerID}").
-                    format(consumerID=sql.Literal(data['consumer_id'])))
+                    format(consumerID = sql.Literal(data['consumer_id'])))
+
         queueoffset = cursor.fetchone()[0]
-        response = createResponse({
-                "status": "success",
-                "size": tid - queueoffset
-            },200)
+        response = GoodResponse({"status": "success", "size": tid - queueoffset})
             
     else:
-        response = createResponse({
-                "status": "failure", 
-                "message": f'Bad request: topic not sent'
-            },500)
+        response = BadRequestResponse('topic or consumer id not sent')
     
     cursor.close()
     print(response)
     return response
+
+
+@app.route('/login', methods = ['GET'])
+def login():
+    data = request.json
+    if "topic" in data and "id" in data and "type" in data:
+        resp, query = checkValidityOfID(data['id'], data['topic'], data['type'])
+        return GoodResponse({"status": "success"}) if query is not None else resp
+
+    else:
+        return BadRequestResponse('topic or consumer id not sent')
 
 
 @app.route("/")
