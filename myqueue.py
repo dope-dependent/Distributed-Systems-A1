@@ -1,3 +1,4 @@
+from urllib import response
 import requests
 
 class myConsumer:
@@ -18,7 +19,7 @@ class myConsumer:
                     self.register[topic] = response.json()['consumer_id']
                 
                 else:
-                    print(f"Error in creating topic: {topic} => {response.json()['message']}")
+                    print(f"Error in registering consumer: {topic} => {response.json()['message']}")
 
 
     def login(self, topics: dict):
@@ -80,6 +81,12 @@ class myConsumer:
         else:
             print('Error in getting next message => ' + response.json()['message'])
             return None
+        
+    def getAllTopics(self):
+        url = self.broker + '/topics'
+        response = requests.get(url)
+
+        return response.json()['topics']
 
 class myProducer:
     def __init__(self, topics: list or None, broker: str):
@@ -148,3 +155,9 @@ class myProducer:
             return None
 
 
+    def getAllTopics(self):
+        url = self.broker + '/topics'
+        response = requests.get(url)
+
+        return response.json()['topics']
+ 

@@ -1,4 +1,5 @@
 import collections
+from tkinter.tix import MAX
 from flask import Flask, request
 import json
 import psycopg2
@@ -6,11 +7,14 @@ from psycopg2 import sql
 
 app = Flask(__name__)
 global conn
+global MAX_TOPICS
+MAX_TOPICS = 100000
 
 # TODO Replace raw indexing by CID indexing as given below
 # TODO Close exit on termination of main.py file
 # TODO (Optional) Move the three Request Classes to a separate file (requires remving the app dependency)
 # TODO Provide option to create tables all_topics, all_consumers from scratch
+# TODO cursor.rollback()
 
 def BadRequestResponse(message: str = ""):
     resp = app.response_class(
@@ -65,8 +69,8 @@ def checkValidityOfID(id: int, topic: str, client: str):
     if len(result) == 0:
         return BadRequestResponse('topic not present in database'), None
 
-    table_id = (id // 10) % (10 ** 12)
-    table_topic = id // (10 ** 13)
+    table_id = id // (10*MAX_TOPICS)
+    table_topic = (id // 10) % (MAX_TOPICS)
     flag = id % 2
     correct_flag = 1 if client == "producer" else 0
     if table_topic != result[0][0] or table_id >= result[0][ind]: 
@@ -98,7 +102,7 @@ def createTopic():
                 id = cursor.fetchone()[0]+1
 
                 cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
-                                (id, data["name"], 0, 0, 1))
+                                (id, data["name"], 1, 1, 1))
 
                 cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
                     messageid BIGINT PRIMARY KEY, 
@@ -123,7 +127,8 @@ def ListTopics():
     cursor.execute("SELECT topicName FROM all_topics")
     all_topics = cursor.fetchall()
     cursor.close()
-    return GoodResponse({"topics": all_topics[0]})
+
+    return GoodResponse({"topics": [t[0] for t in all_topics]})
 
 # C
 @app.route("/consumer/register", methods = ["POST"])
@@ -140,7 +145,7 @@ def registerConsumer():
                 try:
                     consumerID = ids[0][2]
                     topicID = ids[0][0]
-                    returnID = (topicID * (10 ** 12) + consumerID) * 10
+                    returnID = (consumerID * (MAX_TOPICS) + topicID) * 10
 
                     response = GoodResponse({"status": "success", "consumer_id": returnID})
 
@@ -178,10 +183,10 @@ def registerProducer():
             if len(result) == 0:    # Create topic if this topic is not present
                 cursor.execute("""SELECT COUNT (*) FROM all_topics""")
                 topicID = cursor.fetchone()[0] + 1
-                producerID = 0
+                producerID = 1
                 
                 cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
-                                (id, data["topic"], 0, 0, 1))
+                                (topicID, data["topic"], 1, 1, 1))
 
                 cursor.execute(sql.SQL("""CREATE TABLE {table_name} (
                     messageid BIGINT PRIMARY KEY, 
@@ -196,12 +201,13 @@ def registerProducer():
             cursor.execute("""UPDATE all_topics SET producerID = %s WHERE topicName = %s""", (producerID + 1, data['topic']))
             cursor.close()
 
-            returnID = (topicID * (10 ** 12) + producerID) * 10 + 1
+            returnID = (producerID * (MAX_TOPICS) + topicID) * 10 + 1
             response = GoodResponse({"status": "success", "producer_id": returnID})  
 
             conn.commit()
         
-        except:
+        except Exception as e:
+            # print(e)
             response = ServerErrorResponse('error in registering producer')
     
     else:
@@ -236,7 +242,8 @@ def enqueueMessage():
 
             response = GoodResponse({"status": "success"})
             conn.commit()
-        except:
+        except Exception as e:
+            print(e)
             response = ServerErrorResponse('error in adding message to the queue')
         
         cursor.close()  
