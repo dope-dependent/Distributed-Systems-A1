@@ -1,9 +1,12 @@
-import collections
-from tkinter.tix import MAX
+import threading
 from flask import Flask, request
 import json
 import psycopg2
 from psycopg2 import sql
+
+global sem
+
+sem = threading.Semaphore()
 
 app = Flask(__name__)
 global conn
@@ -86,6 +89,7 @@ def createTopic():
 
     if "name" in data:
         cursor = conn.cursor()
+        sem.acquire()
         cursor.execute("SELECT * FROM all_topics WHERE topicName = %s",(data["name"],))
         if len(cursor.fetchall()) != 0:
             response = ServerErrorResponse('topic already present')
@@ -100,7 +104,6 @@ def createTopic():
                 
                 cursor.execute("""SELECT COUNT (*) FROM all_topics""")
                 id = cursor.fetchone()[0]+1
-
                 cursor.execute("INSERT INTO all_topics (topicID, topicName, producerID, consumerID, tailID) VALUES (%s, %s, %s, %s, %s)",
                                 (id, data["name"], 1, 1, 1))
 
@@ -108,15 +111,16 @@ def createTopic():
                     messageid BIGINT PRIMARY KEY, 
                     message TEXT
                 )""").format(table_name = sql.Identifier(data['name'])))
-
+                
                 conn.commit()
                 cursor.close()
             except:
                 response = ServerErrorResponse("failed to add topic to database")
-
+            finally:
+                sem.release()
     else:
         response = BadRequestResponse('topic not sent')
-        
+    sem.release()
     print(response)
     return response   
 
@@ -137,6 +141,7 @@ def registerConsumer():
 
     if "topic" in data:
             cursor = conn.cursor()
+            sem.acquire()
             cursor.execute("""SELECT * FROM all_topics WHERE topicName = %s""", (data['topic'],))
             ids = cursor.fetchall()
             cursor.close()
@@ -148,18 +153,18 @@ def registerConsumer():
                     returnID = (consumerID * (MAX_TOPICS) + topicID) * 10
 
                     response = GoodResponse({"status": "success", "consumer_id": returnID})
-
                     cursor = conn.cursor()
                     cursor.execute("""UPDATE all_topics SET consumerID = %s WHERE topicName = %s""", (consumerID + 1, data['topic']))
                     cursor.execute("""INSERT INTO all_consumers (consumerid, queueoffset) VALUES (%s, %s)""", (returnID, 1))
                     cursor.close()
-
                     conn.commit()
 
                 except:
                     response = ServerErrorResponse('error in registering the consumer')
-
+                finally:
+                    sem.release()
             else: 
+                sem.release()
                 response = ServerErrorResponse('topic not present in the database')
             
     else:
@@ -177,9 +182,12 @@ def registerProducer():
     data = request.json
     if "topic" in data:
         cursor = conn.cursor()
+        sem.acquire()
         cursor.execute("SELECT * FROM all_topics WHERE topicName = %s", (data["topic"],))
         result = cursor.fetchall()
         try:
+            print(sem)
+
             if len(result) == 0:    # Create topic if this topic is not present
                 cursor.execute("""SELECT COUNT (*) FROM all_topics""")
                 topicID = cursor.fetchone()[0] + 1
@@ -192,14 +200,15 @@ def registerProducer():
                     messageid BIGINT PRIMARY KEY, 
                     message TEXT
                 )""").format(table_name = sql.Identifier(data['topic'])))
-            
+                
             else:
                 topicID = result[0][0]
                 producerID = result[0][3]
 
-
+            
             cursor.execute("""UPDATE all_topics SET producerID = %s WHERE topicName = %s""", (producerID + 1, data['topic']))
             cursor.close()
+            
 
             returnID = (producerID * (MAX_TOPICS) + topicID) * 10 + 1
             response = GoodResponse({"status": "success", "producer_id": returnID})  
@@ -209,7 +218,8 @@ def registerProducer():
         except Exception as e:
             # print(e)
             response = ServerErrorResponse('error in registering producer')
-    
+        finally:
+            sem.release()
     else:
         response = BadRequestResponse('topic not sent')
 
@@ -222,6 +232,7 @@ def enqueueMessage():
     data = request.json
     if "topic" in data and "producer_id" in data and "message" in data:
         # Check for data['topic']
+        sem.acquire()
         resp, result = checkValidityOfID(data['producer_id'], data['topic'], "producer")
         if result is None: return resp
 
@@ -246,6 +257,9 @@ def enqueueMessage():
             print(e)
             response = ServerErrorResponse('error in adding message to the queue')
         
+        finally:
+            sem.release()
+
         cursor.close()  
         
         
@@ -282,14 +296,14 @@ def dequeueMessage():
                                             hid = sql.Literal(hid)))
 
                 message = cursor.fetchall()[0][0]
-
+                sem.acquire()
                 cursor.execute("UPDATE all_consumers SET queueoffset = %s WHERE consumerID = %s", (hid + 1, data['consumer_id']))
-                
                 response = GoodResponse({"status": "success", "message": message})
                 conn.commit()
             except:
                 response = ServerErrorResponse('error in fetching message from the queue')
-        
+            finally:
+                sem.release()
         cursor.close()
     else:
         response = BadRequestResponse('topic or consumer id not sent')

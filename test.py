@@ -1,59 +1,72 @@
-from myqueue import myProducer
-from myqueue import myConsumer
+from fileinput import filename
+import threading
+import time
+from random import randint
+from myqueue import myConsumer, myProducer
+
+topic_1 = "T-1"
+topic_2 = "T-2"
+topic_3 = "T-3"
+
+def consumer_func(consumer_id, topics : list):
+    file_name = "./test_asgn1/consumer_" + str(consumer_id) + ".txt"
+    log_file = open(file_name,"w")
+    consumer = myConsumer(topics = topics, broker = "http://localhost:5000")
+    
+    while True:
+
+        for topic in topics:
+            time.sleep(1)
+            log = consumer.getNextMessage(topic)
+            if log is not None:
+                log_file.write(log)
+
+def producer_func(producer_id, topics: list):
+
+    # if producer_id == 2:
+        # time.sleep(10)
+
+    producer = myProducer(topics = topics, broker = "http://localhost:5000")
+    file_name = "./test_asgn1/producer_" + str(producer_id) + ".txt"
+    log_file = open(file_name, "r")
+
+    for log in log_file:
+
+        sleep_time = randint(20,60) / 60
+        time.sleep(sleep_time*2)
+        topic = log.split()[3]
+        producer.sendNewMessage(topic, log) 
 
 
-p1 = myProducer(topics = ['user_logout', 'user_message','user_signup'], broker = 'http://localhost:5000')
-c1 = myConsumer(topics = ['user_login', 'failure_lol'], broker = 'http://localhost:5000')
+
+t1 = threading.Thread(target=producer_func, args=(1,['T-1', 'T-2', 'T-3']))
+t2 = threading.Thread(target=producer_func, args=(2,['T-1', 'T-3']))
+t3 = threading.Thread(target=producer_func, args=(3,['T-1']))
+t4 = threading.Thread(target=producer_func, args=(4,['T-2']))
+t5 = threading.Thread(target=producer_func, args=(5,['T-1', 'T-2', 'T-3']))
+
+
+t6 = threading.Thread(target=consumer_func, args=(1,['T-1', 'T-2', 'T-3']))
+t7 = threading.Thread(target=consumer_func, args=(2,['T-1', 'T-3']))
+t8 = threading.Thread(target=consumer_func, args=(3,['T-1', 'T-2', 'T-3']))
 
 
 
-if 'user_login' in list(c1.register.keys()):
-    print('Consumer Creation Test PASSED')
-else:
-    print('Consumer Creation Test FAILED')
+t1.start()
+t2.start()
+t3.start()
+t4.start()
+t5.start()
+t6.start()
+t7.start()
+t8.start()
 
 
-if set(['user_logout', 'user_login','user_signup']) == set(list(p1.register.keys())):
-    print('Producer Creation Test PASSED')
-else:
-    print('Producer Creation Test FAILED')
-
-
-print(p1.register)
-print(c1.register)
-
-
-initialQueueSize = c1.getQueueSize(topic = 'user_login')
-
-p1.sendNewMessage(topic = 'sjdflsjkdflkjsdlkf', message = 'jksdjflksdjflksdjf')
-p1.sendNewMessage(topic = 'user_logout', message = 'Hello, I need to logout')
-p1.sendNewMessage(topic = 'user_login', message='Hello, I need to login')
-p1.sendNewMessage(topic = 'user_login', message='Hello, I need to login (2)')
-
-if c1.getQueueSize(topic = 'user_login') - initialQueueSize == 2:
-    print("Message Creation Test PASSED")
-else:
-    print("Message Creation Test FAILED")
-
-c1.getNextMessage(topic = 'user_login')
-
-if c1.getQueueSize(topic = 'user_login') - initialQueueSize == 1:
-    print("Message Consumption Test PASSED")
-else:
-    print("Message Consumption Test FAILED")
-
-print(p1.getAllTopics())
-
-c2 = myConsumer(topics=[],broker = 'http://localhost:5000')
-
-c2_id = c1.register['user_login']
-
-c2.login({'user_login': c2_id})
-
-if c1.getQueueSize(topic = 'user_login') == c2.getQueueSize(topic = 'user_login'):
-    print("Consumer Login Test PASSED")
-else:
-    print("Consumer Login Test FAILED")
-
-c2.login({'user_logout': 1000020})
-
+t1.join()
+t2.join()
+t3.join()
+t4.join()
+t5.join()
+t6.join()
+t7.join()
+t8.join()
