@@ -13,24 +13,29 @@ class myConsumer:
         for topic in topics:
             if topic not in self.register:
                 url = self.broker + '/consumer/register'
-                response = requests.post(url, json = {'topic':topic}, headers = {'Content-Type': 'application/json'})
-                
-                if response.status_code == 200:
-                    self.register[topic] = response.json()['consumer_id']
-                
-                else:
-                    print(f"Error in registering consumer: {topic} => {response.json()['message']}")
+                try:    
+                    response = requests.post(url, json = {'topic':topic}, headers = {'Content-Type': 'application/json'})
+                    if response.status_code == 200:
+                        self.register[topic] = response.json()['consumer_id']
+                    else:
+                        print(f"Error in registering consumer: {topic} => {response.json()['message']}")
+
+                except:
+                    print("Error: error in connecting with the server")
 
 
     def login(self, topics: dict):
         for topic in topics.keys():
             if topic not in self.register:
                 url = self.broker + '/login'
-                response = requests.get(url, json = {'topic':topic, 'id': topics[topic], 'type': "consumer"}, headers = {'Content-Type': 'application/json'})
-                if response.status_code == 200:
-                    self.register[topic] = topics[topic]
-                else:
-                    print(f"Error in logging in with topic {topic} => {response.json()['message']}")
+                try:
+                    response = requests.get(url, json = {'topic':topic, 'id': topics[topic], 'type': "consumer"}, headers = {'Content-Type': 'application/json'})
+                    if response.status_code == 200:
+                        self.register[topic] = topics[topic]
+                    else:
+                        print(f"Error in logging in with topic {topic} => {response.json()['message']}")
+                except:
+                    print("Error: error in connecting with the server")
             else:
                 print(f'Already logged in with topic {topic}')
 
@@ -57,36 +62,44 @@ class myConsumer:
         if topic not in self.register:
             print("Error in getting queue size => Topic not subscribed by the consumer")
             return None
+        
+        try:
+            response = requests.get(url,json = {'topic':topic, 'consumer_id': self.register[topic]})
 
-        response = requests.get(url,json = {'topic':topic, 'consumer_id': self.register[topic]})
+            if response.status_code == 200:
+                return response.json()['size']
 
-        if response.status_code == 200:
-            return response.json()['size']
-
-        else:
-            print("Error in getting queue size => " + response.json()['message'])
-            return None
+            else:
+                print("Error in getting queue size => " + response.json()['message'])
+                return None
+        except:
+            print("Error: error in connecting with the server")
     
     def getNextMessage(self, topic: str):
         url = self.broker + '/consumer/consume'
         if topic not in self.register:
             print("Error in getting next message => Topic not subscribed by the consumer")
             return None
-        
-        response = requests.get(url, json = {'topic': topic, 'consumer_id': self.register[topic]})
+        try:
+            response = requests.get(url, json = {'topic': topic, 'consumer_id': self.register[topic]})
 
-        if response.status_code == 200:
-            return response.json()['message']
-        
-        else:
-            print('Error in getting next message => ' + response.json()['message'])
-            return None
+            if response.status_code == 200:
+                return response.json()['message']
+            
+            else:
+                print('Error in getting next message => ' + response.json()['message'])
+                return None
+        except:
+            print("Error: error in connecting with the server")
         
     def getAllTopics(self):
         url = self.broker + '/topics'
-        response = requests.get(url)
+        try:
+            response = requests.get(url)
 
-        return response.json()['topics']
+            return response.json()['topics']
+        except:
+            print("Error: error in connecting with the server")
 
 class myProducer:
     def __init__(self, topics: list or None, broker: str):
@@ -100,24 +113,31 @@ class myProducer:
         for topic in topics:
             if topic not in self.register:
                 url = self.broker + '/producer/register'
-                response = requests.post(url, json = {'topic':topic}, headers = {'Content-Type': 'application/json'})
-                
-                if response.status_code == 200:
-                    self.register[topic] = response.json()['producer_id']
-                
-                else:
-                    print(f"Error in creating topic: {topic} => {response.json()['message']}")
+                try:
+                    response = requests.post(url, json = {'topic':topic}, headers = {'Content-Type': 'application/json'})
+                    
+                    if response.status_code == 200:
+                        self.register[topic] = response.json()['producer_id']
 
-    def login(self, topics: dict):
+                    else:
+                        print(f"Error in creating topic: {topic} => {response.json()['message']}")
+
+                except:
+                    print("Error: error in connecting with the server")
+
+    def login(self,topics: dict):
         for topic in topics.keys():
             if topic not in self.register:
                 url = self.broker + '/login'
-                response = requests.get(url, json = {'topic':topic, 'id': topics[topic], 'type': "producer"}, headers = {'Content-Type': 'application/json'})
-                if response.status_code == 200:
-                    self.register[topic] = topics[topic]
-                else:
-                    print(response)
-                    print(f"Error in logging in with topic {topic} => {response.json()['message']}")
+                try:
+                    response = requests.get(url, json = {'topic':topic, 'id': topics[topic], 'type': "producer"}, headers = {'Content-Type': 'application/json'})
+                    if response.status_code == 200:
+                        self.register[topic] = topics[topic]
+                    else:
+                        print(response)
+                        print(f"Error in logging in with topic {topic} => {response.json()['message']}")
+                except:
+                    print("Error: error in connecting with the server")
             else:
                 print(f'Already logged in with topic {topic}')
 
@@ -145,14 +165,17 @@ class myProducer:
             print("Error in producing message => Topic not subscribed by the producer")
             return None
         
-        response = requests.post(url, json = {'topic': topic, 'producer_id': self.register[topic], 'message': message})
+        try:
+            response = requests.post(url, json = {'topic': topic, 'producer_id': self.register[topic], 'message': message})
 
-        if response.status_code == 200:
-            return None
+            if response.status_code == 200:
+                return None
         
-        else:
-            print('Error in sending message => ' + response.json()['message'])
-            return None
+            else:
+                print('Error in sending message => ' + response.json()['message'])
+                return None
+        except:
+            print("Error: error in connecting with the server")
 
 
     def getAllTopics(self):
